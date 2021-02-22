@@ -1,0 +1,141 @@
+---
+title: "How is No Crowd Effecting the English Premier League?"
+subtitle: "A unique insight into footballs 12th man"
+author: "Matthew Henderson"
+date: "20 February 2021"
+output: ioslides_presentation
+df_print: "kable"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Motivation
+
+- The 2020/21 English Premier League season is the first to be played with little to no crowd in any matches.
+- Unique opportunity to analyse whether having a crowd effects a football match.
+- Great English Premier League dataset contanaing seasons 1993/94 - 2020/21 on kaggle <https://www.kaggle.com/irkaal/english-premier-league-results>
+- Seasons 1993/94 and 1994/95 were dropped since there was 22 teams opposed to 20 after.
+
+## Summary Stats 
+
+```{r, echo=FALSE, message=FALSE}
+## How has no crowd effected the Premier League this Season?
+library(dplyr)
+library(moments)
+library(tibble)
+# read in results data from Seasons 1993/94 - now
+results <- read.csv("data/external/results/results.csv")
+results <- results %>% filter(Season != "1993-94")
+results <- results %>% filter(Season != "1994-95")
+results <- results %>% select(Season, DateTime, HomeTeam, AwayTeam, FTHG, FTAG, FTR, Referee)
+# Create statistical summaries from this season
+HomeSummary <- results %>% group_by(Season) %>% summarise(mean = mean(FTHG), median = median(FTHG), sd = sd(FTHG), skew = skewness(FTHG), min = range(FTHG)[1], max = range(FTHG)[2])
+AwaySummary <- results %>% group_by(Season) %>% summarise(mean = mean(FTAG), median = median(FTAG), sd = sd(FTAG), skew = skewness(FTAG), min = range(FTAG)[1], max = range(FTAG)[2])
+HomeSummary$HoA <- "Home"
+AwaySummary$HoA <- "Away"
+GoalSummary <- rbind(HomeSummary, AwaySummary)
+GoalSummary$HoA <- factor(GoalSummary$HoA, levels = c("Home", "Away"))
+GoalSummary <- arrange(GoalSummary, Season)
+GoalSummary <- mutate(GoalSummary, ID = "")
+GoalSummary$ID[GoalSummary$Season != "2020-21"] <- "Past"
+GoalSummary$ID[GoalSummary$Season == "2020-21"] <- "Present"
+GoalSummary$ID <- factor(GoalSummary$ID, levels = c("Past", "Present"))
+tail(GoalSummary, 12)
+```
+
+
+## Average goals scored at Home vs Away
+
+```{r, echo=FALSE}
+library(ggplot2)
+# create a plot to compare the mean goals this season against previous seasons
+g <- ggplot(GoalSummary, aes(x = HoA, y = mean, group = Season))
+g <- g + geom_line(size = 1, aes(colour = ID)) + geom_point(size = 5, pch = 21, fill = "salmon", alpha = 0.5, data = filter(GoalSummary, ID == "Past"))
+g <- g + geom_point(size = 10, pch = 21, fill = "black", data = filter(GoalSummary, ID == "Present"))
+g
+```
+
+## Average goals scored at Home vs Away
+
+- The 2020/21 Season is the only in the last 25 years to have a near horizontal trend.
+- The lowest average of home goals.
+- The highest average of away goals.
+- Can we prove this season is unique and not a product of random chance?
+
+## Statistical Proof
+
+- $H_0:$ Premier League teams score the same number of goals at home as they do away from home on average.
+- $H_a:$ Premier League teams score more goals at home than they do away from home on average.
+
+Formally:
+
+$$
+H_0: \mu = 0
+$$
+
+Versus:
+
+$$
+H_0: \mu > 0
+$$
+
+## Statistical Proof
+
+```{r, echo=FALSE}
+with(filter(results, Season != "2020-21"), t.test(FTHG, FTAG, paired = TRUE, alternative = "greater"))
+```
+
+## What is happening exactly?
+
+```{r, echo=FALSE, message=FALSE}
+library(reshape2)
+# Now lets look at the change in distribution
+# home ... 
+HomeDistr <- results %>% group_by(Season) %>% count(FTHG)
+HomeDistrWide <- dcast(HomeDistr, Season ~ FTHG, value.var = "n")
+HomeDistrWide[is.na(HomeDistrWide)] <- 0
+HomeDistr <- melt(HomeDistrWide, id.vars = "Season", value.name = "n", variable.name = "FTHG")
+HomeDistr <- HomeDistr %>% arrange(Season, FTHG)
+# away ... 
+AwayDistr <- results %>% group_by(Season) %>% count(FTAG)
+AwayDistrWide <- dcast(AwayDistr, Season ~ FTAG, value.var = "n")
+AwayDistrWide[is.na(AwayDistrWide)] <- 0
+AwayDistr <- melt(AwayDistrWide, id.vars = "Season", value.name = "n", variable.name = "FTAG")
+AwayDistr <- AwayDistr %>% arrange(Season, FTAG)
+#
+names(HomeDistr) <- c("Season", "FTG", "n"); names(AwayDistr) <- c("Season", "FTG", "n")
+HomeDistr$HoA <- "Home"; AwayDistr$HoA <- "Away"
+GoalDistr <- rbind(HomeDistr, AwayDistr)
+GoalDistr$HoA <- factor(GoalDistr$HoA, levels = c("Home", "Away"))
+# add in a probability density for each goal
+GoalDistr <- GoalDistr %>% group_by(Season, HoA) %>% mutate(p = n / sum(n))
+# Assuming the other seasons in the Premeir League and 2020-21 is an outlier
+# lets fit a distribution to all of the other seasons and compare to 2020-21
+# split home and away
+GoalDistr$ID <- ""
+GoalDistr$ID[GoalDistr$Season != "2020-21"] <- "Past Seasons"
+GoalDistr$ID[GoalDistr$Season == "2020-21"] <- "This Season"
+GoalDistr$ID <- factor(GoalDistr$ID, levels = c("Past Seasons", "This Season"))
+# group by past and present and find a general distribution for the past seasons
+GeneralDistr <- GoalDistr %>% group_by(ID, HoA, FTG) %>% summarise(p = mean(p)) 
+GeneralDistr$FTG <- as.numeric(as.character(GeneralDistr$FTG))
+# plot the distributions 
+g1 <- ggplot(GeneralDistr, aes(FTG, p, fill = ID)) + 
+  geom_point(size = 5, pch = 21, alpha = 0.5) + 
+  geom_line(aes(linetype = ID, colour = ID), size = 1) +
+  facet_wrap(~HoA, nrow = 1) +
+  scale_x_continuous(breaks = 0:9)
+g1
+```
+
+## Conclusions
+
+- The average of home goals scored by Premier League teams is more than the average away goals (around 0.4 more).
+- In the 2020/21 season there has been no difference between home and away goals in the  Premier League.
+- Given what we know about this season we can attribute that to there being no crowd and conclude that a teams home support is in effect the 12th man in football.
+
+
+
+
